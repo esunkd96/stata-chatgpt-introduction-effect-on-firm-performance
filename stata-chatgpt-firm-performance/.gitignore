@@ -1,0 +1,13 @@
+# Stata logs
+*.smcl
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# If you later add local config files:
+*.local
+
+# Keep data out of git (we still keep data/README.md)
+data/*
+!data/README.md
