@@ -1,188 +1,121 @@
 // 01_cleaning.do — data preparation and feature engineering
-version 18.5
+version 17
 clear all
 set more off
 
-// prepare the data 
-format datadate %td // make sure it is in the correct Stata format 
+// ---- project paths (assumes called from repo root) ----
+global ROOT : pwd
+global DATA "$ROOT/data"
+global OUT  "$ROOT/results"
 
-// generate quarter date variable for better comparison
+// ---- load & basic date handling ----
+use "$DATA/case_study_data.dta", clear
+
+// ensure Stata date & quarter
+format datadate %td
 gen quarter_date = qofd(datadate)
 format quarter_date %tq
-list gvkey datadate fyearq fqtr quarter_date in 1/10
 
-gen post_chatgpt = (quarter_date >= tq(2023q1))
-// will be 0 until 2022q4
-// will be 1 from 2023q1
+// cutoff for ChatGPT introduction
+gen byte post_chatgpt = quarter_date >= tq(2023q1)
 
+// ---- industries (coarse buckets) ----
+// safer: real(substr()) avoids destring twice
+gen byte naics_major  = real(substr(naics,1,1))
+gen byte naics_major2 = real(substr(naics,1,2))
 
-// generate industries 
-gen naics_major = substr(naics, 1, 1)
-destring naics_major, replace
+gen byte industry = .
+replace industry = 1 if inlist(naics_major,1,2,4)    // Resource
+replace industry = 2 if inlist(naics_major,5,6,7)    // Production/Trade
+replace industry = 3 if inlist(naics_major,3,8,9)    // Technology
 
-gen naics_major2 = substr(naics, 1, 2)
-destring naics_major2, replace
+label define industry_lbl 1 "Resource" 2 "Production" 3 "Technology", replace
+label values industry industry_lbl
 
+// ---- panel id ----
+xtset gvkey quarter_date, quarterly
 
-gen industry = .
-replace industry = 1 if naics_major == 1 | naics_major == 2 | naics_major == 4 // resource based industries  
-replace industry= 2 if naics_major == 5 | naics_major == 6 | naics_major == 7 // production/trade  
-replace industry = 3 if naics_major == 3 | naics_major == 8 | naics_major == 9  // technology 
+// ====================== CLEANING ======================
 
-label define industry_label ///
-    1 "Resource" ///
-    2 "Production" ///
-    3 "Technology " ///
-	
-label values industry industry_label
-
-// set up panel data structure
-xtset gvkey quarter_date
-
-
-
-// clean data set 
-
-
-// drop ETF's 
-count if naics == "525910"
+// drop ETFs and obs w/ missing NAICS or industry
 drop if naics == "525910"
+drop if missing(naics) | missing(industry)
 
+// keep firms with at least one 2023q1 report (as in your brief)
+gen byte reported_2023q1 = (fyearq==2023 & fqtr==1)
+bys gvkey: egen byte has_2023q1 = max(reported_2023q1)
+drop if has_2023q1==0
 
-// drop if Naics code is missing 
-count if missing(naics)
-drop if missing(naics)
+// ensure consistent industry per firm: use modal industry instead of deleting
+bys gvkey: egen mode_ind = mode(industry), maxmode
+replace industry = mode_ind if !missing(mode_ind)
+drop mode_ind
 
+// drop obs with missing industry after harmonization
+drop if missing(industry)
 
-// drop firms when reporting 2023q1 is missing 
-gen reported_2023q1 = (fyearq == 2023 & fqtr == 1) 
-order reported_2023q1, after (post_chatgpt)
-bysort gvkey: egen has_2023q1 = max(reported_2023q1)
-drop if has_2023q1 == 0
-
-
-// drop if inconsistent industry  
-bysort gvkey (industry): gen inconsistent_industry = (industry != industry[_n-1])
-count if inconsistent_industry
-drop if inconsistent_industry // 11,731 observations deleted 
-
-
-// drop if there is no industry belonging to company 
-drop if industry == .
-
-
-// delete variables that only helped us clean the dataset 
-bysort gvkey (fyearq): gen nquarters = _N 
-bysort gvkey: egen max_nquarters = max(nquarters)
-drop nquarters max_nquarters has_2023q1 inconsistent_industry reported_2023q1
-
-
-// Remove outliers for saleq:
-* Step 1: Create a variable for the percentiles of saleq
-xtile pct_saleq = saleq, nq(100)
-
-* Step 2: Drop observations in the top and bottom 5% (i.e., top 5 and bottom 5 percentiles)
+// remove extreme sales outliers (5–95 pct) — or winsorize if you prefer
+quietly xtile pct_saleq = saleq, nq(100)
 drop if pct_saleq <= 5 | pct_saleq >= 95
+drop pct_saleq
 
-* Step 3: Check if the drop was successful
-summarize saleq
+// ====================== FEATURES ======================
 
+// helper: safe division (returns . if denom<=0 or missing)
+program define _safediv, rclass
+    // usage: gen X = r(safe), after you set locals num den
+end
 
+// 1) cost efficiency = COGS / revenue
+gen double cost_efficiency = (revtq>0 & !missing(revtq) ? cogsq/revtq : .)
+gen double log_cost_efficiency = (cost_efficiency>0 ? log(cost_efficiency) : .)
+label var cost_efficiency     "COGS / Revenue"
+label var log_cost_efficiency "log(COGS/Revenue)"
 
+// 2) investments = CAPEX / total assets
+gen double investments_capex = (atq>0 & !missing(atq) ? capxy/atq : .)
+label var investments_capex "CAPEX / Assets"
 
+// 3) revenue growth (q/q)
+gen double revenue_growth = (L.revtq>0 & !missing(L.revtq) ? (revtq-L.revtq)/L.revtq : .)
+label var revenue_growth "Revenue growth (q/q)"
 
-// generate dependent variables 
+// 4) profitability = NI / revenue
+gen double profitability_revenue = (revtq!=0 & !missing(revtq) ? niq/revtq : .)
+label var profitability_revenue "Net income / Revenue"
 
-// 1. cost efficiency 
-generate cost_efficiency = cogsq/revtq // cost efficiency = operating expenses/revenue 
-sum cost_efficiency, detail
-bysort industry: summarize cost_efficiency
+// controls
+gen double current_to_total_assets = (atq>0 ? actq/atq : .)
+gen double debt_to_assets          = (atq>0 ? ltq/atq  : .)
+gen double roa                     = (atq!=0 & !missing(atq) ? niq/atq : .)
+gen double inventory_turnover      = (invtq>0 ? cogsq/invtq : .)
+gen double log_inventory_turnover  = (inventory_turnover>0 ? log(inventory_turnover) : .)
+gen double asinh_roa               = asinh(roa)
+gen double log_debt_to_assets      = (debt_to_assets>=0 ? log(debt_to_assets+1) : .)
+gen double log_firm_size           = (atq>0 ? log(atq) : .)
+gen double rnd_to_sales            = (saleq>0 ? xrdq/saleq : .)
+gen double log_rnd                 = (xrdq>=0 ? log(xrdq+1) : .)
 
+label var current_to_total_assets "Current assets / Total assets"
+label var debt_to_assets          "Debt / Assets"
+label var roa                     "Return on Assets"
+label var inventory_turnover      "Inventory turnover"
+label var log_inventory_turnover  "log(Inventory turnover)"
+label var asinh_roa               "asinh(ROA)"
+label var log_debt_to_assets      "log(Debt/Assets + 1)"
+label var log_firm_size           "log(Total assets)"
+label var rnd_to_sales            "R&D / Sales"
+label var log_rnd                 "log(1+R&D)"
 
-
-// 2.investments 
-gen investments_capex = capxy/atq // investments = capex/assets 
-sum investments_capex, detail 
-bysort industry: summarize investments_capex
-
-
-
-// 3.revenue growth 
-xtset gvkey quarter_date
-gen revenue_growth = (revtq - L.revtq) / L.revtq 
-bysort post_chatgpt: sum revenue_growth
-bysort post_chatgpt industry: sum revenue_growth
-
-
-
-// 4. overall profitability 
-generate profitability_revenue = niq/revtq
-count if missing(profitability_revenue)
-sum profitability_revenue, detail
-bysort industry: summarize profitability_revenue
-
-
-
-
-
-// generate independent variables
-gen current_to_total_assets = actq / atq
-label var current_to_total_assets "Current Assets to Total Assets Ratio"
-
-gen debt_to_assets = ltq / atq
-label var debt_to_assets "Debt to Asset Ratio"
-
-gen roa = niq / atq
-label var roa "Return on Assets (ROA)"
-
-
-gen inventory_turnover = cogsq / invtq
-label var inventory_turnover "Inventory Turnover"
-
-
-gen log_cost_efficiency = log(cost_efficiency) if cost_efficiency > 0
-
-
-// Create log of total assets as a proxy for firm size
-gen log_firm_size = log(atq)
-
-// Create R&D expense to sales ratio
-gen rnd_to_sales = xrdq / saleq
-
-// Alternatively, you can use raw R&D expense log-transformed
-gen log_rnd = log(xrdq + 1)
-
-
-// Summarize the generated variables to verify
-summarize current_to_total_assets debt_to_assets roa inventory_turnover, detail
-
-
-// transform variables 
-
-// Log-transform Inventory Turnover
-gen log_inventory_turnover = log(inventory_turnover)
-label var log_inventory_turnover "Log of Inventory Turnover"
-
-
-// Arcsinh-transform ROA to handle negative and extreme values
-gen asinh_roa = asinh(roa)
-label var asinh_roa "Arcsinh of Return on Assets"
-
-// Log-transform Debt to Asset Ratio to stabilize skewness
-gen log_debt_to_assets = log(debt_to_assets + 1) // Add 1 to avoid log(0)
-label var log_debt_to_assets "Log of Debt to Asset Ratio"
-
-// No transformation for Current Assets to Total Assets Ratio
+// quick sanity checks
+summarize cost_efficiency investments_capex revenue_growth profitability_revenue
 summarize current_to_total_assets log_inventory_turnover asinh_roa log_debt_to_assets
 
-// transform cost efficiency 
-summarize cost_efficiency, detail
+// drop temporary vars & tidy
+drop reported_2023q1 has_2023q1
 
-//histogram current_to_total_assets, percent normal title("Current to Total Assets Ratio")
-//histogram log_inventory_turnover, percent normal title("Log of Inventory Turnover")
-//histogram asinh_roa, percent normal title("Arcsinh ROA")
-//histogram log_debt_to_assets, percent normal title("Log Debt to Asset Ratio")
-
-correlate current_to_total_assets log_inventory_turnover asinh_roa log_debt_to_assets
-
-
+// compress, order, and save
+compress
+order gvkey quarter_date post_chatgpt industry, first
+save "$OUT/panel_clean.dta", replace
+display as result "Saved cleaned panel to: $OUT/panel_clean.dta"
