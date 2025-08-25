@@ -1,252 +1,235 @@
-// 02_models.do — regressions and exports
-// Regressions 
+* ---- ensure export tools are available ----
+cap which esttab
+if _rc ssc install estout, replace
+eststo clear
 
+// ========================== COST EFFICIENCY ==========================
 
-// _________________________________________COST EFFICIENCY____________________________________________________
+// OLS
+reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
+eststo ce_ols
 
-// OLS:  
-
-reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
-
-// Test Assumptions for OLS Regression: 
-
-// omitted variable bias 
+// OLS diagnostics
 estat ovtest
-// p = 0.000 --> model likely has omitted variable bias 
-
-// Mulitcolinearity
-vif // very low multicollinearity in the model, no need to worry 
-
-// Homoskedasticity (A4)
-// 1. Breusch-Pagan test 
+vif
 estat hettest, iid
-// p-value = 0.000 --> Heteroscedasticity 
-// 2. White test 
 estat imtest, white
-// p-value = 0.000 --> Heteroscedasticity --> use robust standard errors 
 
-// robust standard errors 
-reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
+// Robust OLS
+reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
+eststo ce_ols_r
 
-// use clusters 
-reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
+// Clustered OLS
+reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
+eststo ce_ols_c
 
-
-
-// Test fixed or random effects model 
-
+// FE vs RE decision
 xtset gvkey datadate
-xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe 
-estimates store fe
+xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
+estimates store ce_fe
+xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
+estimates store ce_re
+hausman ce_fe ce_re
 
-xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
-estimates store re
+// Correlations
+pwcorr log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
 
-hausman fe re // use fixed effects model for our estimation 
+// Clustered FE (main spec)
+xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
+eststo ce_fe_c
 
+// Export main CE models
+esttab ce_ols ce_ols_r ce_ols_c ce_fe ce_fe_c using "$TABS/costeff_main.tex", ///
+    se star(* 0.10 ** 0.05 *** 0.01) replace label title("Cost Efficiency Models")
 
-// Correlation analysis to check relationships between variables
-pwcorr log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
-
-// use clusters to make standard errors robust to heteroscedasticity and autocorrelation within clusters 
-xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt, fe cluster(gvkey)
-
-
-// Fixed-effects regression with the added variables (log_firm_size and rnd_to_sales)
-xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
-
-// Adjust standard errors for clustering by firm (gvkey)
-xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
-
-
-
-// create loop command for industries 
+// Industry splits (clustered FE) + export per-industry table
 levelsof industry, local(industry_list)
 foreach i of local industry_list {
-    xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales if industry == `i', fe vce(cluster gvkey)
+    eststo clear
+    xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
+        current_to_total_assets post_chatgpt log_firm_size rnd_to_sales ///
+        if industry==`i', fe vce(cluster gvkey)
+    esttab using "$TABS/costeff_industry`i'.tex", se replace label ///
+        title("Cost Efficiency – Industry `i'")
     display "Results for industry: `i'"
 }
 
 
+// ============================== INVESTMENT ==============================
 
+// OLS
+reg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
+eststo inv_ols
 
-//_______________________________________Investment_________________________________________________________
-
-// OLS: 
-reg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
-
-// Test Assumptions for OLS Regression: 
-
-// omitted variable bias 
+// Diagnostics
 estat ovtest
-// p = 0.000 --> model likely has omitted variable bias 
-
-// Mulitcolinearity
-vif // very low multicollinearity in the model, no need to worry 
-
-// Homoskedasticity (A4)
-// 1. Breusch-Pagan test 
+vif
 estat hettest, iid
-// p-value = 0.000 --> Heteroscedasticity 
-// 2. White test 
 estat imtest, white
-// p-value = 0.000 --> Heteroscedasticity --> use robust standard errors
 
+// Robust & clustered OLS
+regress investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
+eststo inv_ols_r
+regress investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
+eststo inv_ols_c
 
-// robust standard errors 
-regress investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , robust
-
-// use clusters 
-regress investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , cluster(gvkey)
-
-
-// Test fixed or random effects 
+// FE vs RE
 xtset gvkey datadate
-xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , fe 
-estimates store fe
+xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
+estimates store inv_fe
+xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
+estimates store inv_re
+hausman inv_fe inv_re
 
-xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re 
-estimates store re
-hausman fe re // test does not deliver solution --> better to use fixed effects 
+// Correlations
+pwcorr investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
 
-// Correlation analysis
-pwcorr investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , sig
+// Clustered FE (main)
+xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
+eststo inv_fe_c
 
+// Export main Investment models
+esttab inv_ols inv_ols_r inv_ols_c inv_fe inv_fe_c using "$TABS/invest_main.tex", ///
+    se star(* 0.10 ** 0.05 *** 0.01) replace label title("Investment Models")
 
-// Fixed-effects models 
-xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , fe robust
-
-xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , fe robust cluster(gvkey)
-
-
-// create loop command for industries
-levelsof industry, local(industry_list) 
-foreach i of local industry_list {       
-    xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales if industry == `i', fe robust cluster(gvkey)
-    display "Results for industry: `i'"
-}
-
-
-
-//____________________________________________Revenue______________________________________________________
-
-// OLS: 
-reg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
-
-
-// Test Assumptions for OLS Regression: 
-
-// omitted variable bias 
-estat ovtest
-// p = 0.0029 --> only at a 1% significance level 
-
-// Mulitcolinearity
-vif // very low multicollinearity in the model, no need to worry 
-
-
-// Homoskedasticity (A4)
-// 1. Breusch-Pagan test 
-estat hettest, iid
-// p-value = 0.0117 --> heteroscedasticity 
-// 2. White test 
-estat imtest, white
-// p-value = 0.9936 --> no heteroscedasticity --> use robust standard errors
-
-// robust standard errors 
-regress revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust 
-
-// use clusters 
-regress revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
-
-
-// Test fixed or random effects model 
-xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
-estimates store fe
-xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
-estimates store re
-hausman fe re // --> use fixed effects model 
-
-// Correlation analysis 
-pwcorr revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
-
-
-
-// Fixed-effects model 
-
-// use revenue_growth as dependent variable 
-xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , fe robust cluster(gvkey)
-
-levelsof industry, local(industry_list)  
-foreach i of local industry_list {       
-    xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales if industry == `i', fe robust cluster(gvkey)
-    display "Results for industry: `i'"
-}
-
-
-
-// use revtq as dependent variable 
-xtreg revtq log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales , fe robust cluster(gvkey)
-
-levelsof industry, local(industry_list)  
-foreach i of local industry_list {       
-    xtreg revtq log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales if industry == `i', fe robust cluster(gvkey)
-    display "Results for industry: `i'"
-}
-
-
-
-//___________________________________________Overall profitability_______________________________________
-
-// OLS: 
-reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
-
-// Test Assumptions for OLS Regression: 
-
-// omitted variable bias 
-estat ovtest
-// p = 0.000 --> model likely has omitted variable bias 
-
-// Mulitcolinearity
-vif // very low multicollinearity in the model, no need to worry 
-
-// Homoskedasticity (A4)
-// 1. Breusch-Pagan test 
-estat hettest, iid
-// p-value = 0.000 --> heteroscedasticity 
-// 2. White test 
-estat imtest, white
-// p-value = 0.000 --> heteroscedasticity --> use robust standard errors
-
-// use robust standard errors 
-reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
-
-// use clusters 
-reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
-
-
-
-// Test for fixed or random effects 
-xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe 
-estimates store fe
-xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re 
-estimates store re
-hausman fe re // --> use fixed effects 
-
-// Correlation analysis: 
-pwcorr profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig 
-
-
-// Fixed effects model
-xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe robust cluster(gvkey)
-
-
-
-
-// create loop command for industries
+// Industry splits
 levelsof industry, local(industry_list)
 foreach i of local industry_list {
-    xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets current_to_total_assets post_chatgpt log_firm_size rnd_to_sales if industry == `i', fe robust cluster(gvkey)
+    eststo clear
+    xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
+        current_to_total_assets post_chatgpt log_firm_size rnd_to_sales ///
+        if industry==`i', fe vce(cluster gvkey)
+    esttab using "$TABS/invest_industry`i'.tex", se replace label ///
+        title("Investment – Industry `i'")
     display "Results for industry: `i'"
 }
 
 
+// ============================== REVENUE ==============================
+
+// OLS
+reg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
+eststo rev_ols
+
+// Diagnostics
+estat ovtest
+vif
+estat hettest, iid
+estat imtest, white
+
+// Robust & clustered OLS
+regress revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
+eststo rev_ols_r
+regress revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
+eststo rev_ols_c
+
+// FE vs RE
+xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
+estimates store rev_fe
+xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
+estimates store rev_re
+hausman rev_fe rev_re
+
+// Correlations
+pwcorr revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
+
+// Clustered FE (main) + alt dep var (revtq) as robustness
+xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
+eststo rev_fe_c
+
+xtreg revtq log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
+eststo revtq_fe_c
+
+// Export main Revenue models
+esttab rev_ols rev_ols_r rev_ols_c rev_fe rev_fe_c revtq_fe_c using "$TABS/revenue_main.tex", ///
+    se star(* 0.10 ** 0.05 *** 0.01) replace label title("Revenue Models")
+
+// Industry splits
+levelsof industry, local(industry_list)
+foreach i of local industry_list {
+    eststo clear
+    xtreg revenue_growth log_inventory_turnover asinh_roa log_debt_to_assets ///
+        current_to_total_assets post_chatgpt log_firm_size rnd_to_sales ///
+        if industry==`i', fe vce(cluster gvkey)
+    esttab using "$TABS/revenue_industry`i'.tex", se replace label ///
+        title("Revenue – Industry `i'")
+    display "Results for industry: `i'"
+}
+
+
+// =========================== PROFITABILITY ===========================
+
+// OLS
+reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales
+eststo pr_ols
+
+// Diagnostics
+estat ovtest
+vif
+estat hettest, iid
+estat imtest, white
+
+// Robust & clustered OLS
+reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, robust
+eststo pr_ols_r
+reg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, cluster(gvkey)
+eststo pr_ols_c
+
+// FE vs RE
+xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
+estimates store pr_fe
+xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, re
+estimates store pr_re
+hausman pr_fe pr_re
+
+// Correlations
+pwcorr profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, sig
+
+// Clustered FE (main)
+xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+    current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe vce(cluster gvkey)
+eststo pr_fe_c
+
+// Export main Profitability models
+esttab pr_ols pr_ols_r pr_ols_c pr_fe pr_fe_c using "$TABS/profit_main.tex", ///
+    se star(* 0.10 ** 0.05 *** 0.01) replace label title("Profitability Models")
+
+// Industry splits
+levelsof industry, local(industry_list)
+foreach i of local industry_list {
+    eststo clear
+    xtreg profitability_revenue log_inventory_turnover asinh_roa log_debt_to_assets ///
+        current_to_total_assets post_chatgpt log_firm_size rnd_to_sales ///
+        if industry==`i', fe vce(cluster gvkey)
+    esttab using "$TABS/profit_industry`i'.tex", se replace label ///
+        title("Profitability – Industry `i'")
+    display "Results for industry: `i'"
+}
