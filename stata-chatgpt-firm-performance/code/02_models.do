@@ -1,3 +1,11 @@
+global ROOT : pwd
+global OUT  "$ROOT/results"
+global FIGS "$OUT/figures"
+global TABS "$OUT/tables"
+cap mkdir "$OUT"
+cap mkdir "$FIGS"
+cap mkdir "$TABS"
+
 * ---- ensure export tools are available ----
 cap which esttab
 if _rc ssc install estout, replace
@@ -27,7 +35,7 @@ reg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
 eststo ce_ols_c
 
 // FE vs RE decision
-xtset gvkey datadate
+xtset gvkey quarter_date
 xtreg log_cost_efficiency log_inventory_turnover asinh_roa log_debt_to_assets ///
     current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
 estimates store ce_fe
@@ -84,7 +92,7 @@ regress investments_capex log_inventory_turnover asinh_roa log_debt_to_assets //
 eststo inv_ols_c
 
 // FE vs RE
-xtset gvkey datadate
+xtset gvkey quarter_date
 xtreg investments_capex log_inventory_turnover asinh_roa log_debt_to_assets ///
     current_to_total_assets post_chatgpt log_firm_size rnd_to_sales, fe
 estimates store inv_fe
