@@ -1,7 +1,7 @@
 # The Impact of Introducing ChatGPT on Firm Fundamentals (Stata)
 
 **University of Münster – Empirical Lab II (WS 2024/25)**  
-This repository contains my Stata implementation of the case study assignment: *“The Impact of Introducing ChatGPT.”*
+This repository contains my Stata implementation of the case study assignment: *“The Impact of Introducing ChatGPT.”* This repository reflects my own coding implementation; the original coursework was conducted in a group setting.
 
 ## Context
 The assignment required an empirical analysis of how the introduction of ChatGPT (from **2023q1** onward) affected firm fundamentals using US Compustat data (**2018–2024**).  
